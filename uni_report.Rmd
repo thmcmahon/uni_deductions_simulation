@@ -1,0 +1,135 @@
+---
+title: "Technical report for Crawford school fiscal policy essay"
+author: "Thomas McMahon"
+date: "29/04/2016"
+output:
+  html_document: default
+  pdf_document:
+    keep_tex: yes
+params:
+  cap_level: 10000
+  r: .045
+  loss: .8
+---
+
+```{r setup, include=FALSE}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(ozTaxData)
+library(knitr)
+
+# income tax and extra revenue functions
+source("income_tax.R")
+
+# Data setup
+tax <- sample_13_14
+tax$WRE_total <- tax$WRE_car_amt + tax$WRE_trvl_amt + tax$WRE_uniform_amt +
+                 tax$WRE_self_amt + tax$WRE_other_amt
+tax$deciles <- ntile(tax$Tot_inc_amt, 10)
+cap_level <- params$cap_level
+tax$cap_level <- cap_level
+r <- as.numeric(params$r)
+loss <- as.numeric(params$loss)
+
+# Helper Functions
+millions <- function(x) paste("$",round(x / 1e6, 0), "m", sep = "")
+pop_total <- function(x, t = 1) (x * 50) * (1 + r) ^ t
+
+```
+
+## Data
+
+The data source for this modelling is the ATO's two per cent sample of tax
+returns for the 2013-14 financial year. The ATO provide researchers a
+representative sample of individual taxpayers' return data, with some
+modifications to protect individuals' privacy. The sample file contains
+demographic information, as well as information on income and deductions claimed
+for work related expenses.
+
+The sample file only contains information about taxpayers that lodged a tax
+return, and therefore is not representative of the population as a whole.
+Therefore the population for analysis will be taxpayers, rather than all
+Australians. For the purposes of analysing the effects of a cap to work related
+expenses this is a relatively minor problem, as only people that lodge tax
+returns claim these deductions.
+
+As the most recent data is from 2013-14, I will adjust the data for wages growth
+[XX per cent] and population growth [XX per cent].
+
+## Methodology
+
+This analysis will follow a static or 'day-after' static micro-simulation 
+modelling approach, this does not take account of any behavioural changes or 
+second-round effects that will result from the introduction of the cap. Static 
+micro-simulation is a technique commonly used to analyse changes in tax or 
+transfer policy. In Australia there are a number of these models, including the 
+National Centre for Social and Economic Modelling's STINMOD model, in Europe the
+EUROMOD model is an example of tax-benefit micro-simulation model.
+
+As I don't have access to the STINMOD model, I will develop a simple 
+micro-simulation model using the ATO tax data sample. This approach has been 
+used in Australia by Phillips to model changes to [tax deduction rules for 
+property
+investors](http://rsss.anu.edu.au/sites/default/files/Distributional_Modelling%20_Negative_Gearing_and_Capital_Gains.pdf)
+and [average tax rates across income 
+distributions](http://rsss.anu.edu.au/sites/default/files/Average_Tax_Rate_by_Income_Distribution_Australia.pdf).
+I will follow the methodology described by Phillips in this analysis.
+
+To calculate the tax value of the benefit of deductions over the cap, I 
+calculated the tax liability for each individual in the tax return data. This 
+analysis does not take into account all of the features of the income tax 
+system, but it does feature the major aspects including personal income tax, the
+medicare levy and the low income tax offset, this mirrors the approach adopted 
+by Phillips. Then I analysed the tax owed both with and without capped
+deductions. The lost tax benefit is the difference between what the individual
+could deduct with and without the cap. This result was then weighted to obtain
+population totals.
+
+## Fiscal Results
+
+```{r fiscal}
+# R spits an error if this is in a single step
+# Uses Tot_inc_amt as an approximation of gross income
+x <- mapply(revenue_increase, tax$Tot_inc_amt, tax$WRE_total, tax$cap_level)
+tax$extra_revenue <- x
+
+revenue <- tax %>% summarise(revenue = sum(extra_revenue))
+
+#revenue <- revenue[[]]
+
+# Create a dataframe to calculate the compound growth
+years <- seq(0,5)
+fin_year <- c('13-14', '14-15', '15-16', '16-17', '17-18', '18-19')
+yearly_rev <- sapply(years, function(x) {
+    millions(pop_total(revenue, t = x) * loss ) # [[]] to get the value
+    })
+
+fiscal_table <- knitr::kable(data.frame(years, fin_year, yearly_rev))
+
+fiscal_table
+```
+
+## Distributional Results
+
+```{r distributional}
+# Income
+tax %>% 
+    select(deciles, WRE_total, extra_revenue) %>% 
+    group_by(deciles) %>% 
+    summarise(
+        # 2017-18 figures
+        total_tax = millions(sum(pop_total(extra_revenue, t = 4) * loss)), 
+        average_tax = paste("$", round(mean(extra_revenue)), sep = "")) %>%
+    kable
+
+
+# Gender
+tax %>% 
+    select(Gender, WRE_total, extra_revenue) %>% 
+    group_by(Gender) %>% 
+    summarise(
+        total_tax = millions(sum(pop_total(extra_revenue, t = 4) * loss)),
+        average_tax = paste("$", round(mean(extra_revenue)), sep = "")) %>%
+    kable
+```
